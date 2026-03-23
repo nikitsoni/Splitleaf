@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SplitLeaf – Settle up without the drama</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍃</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;700;900&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100vh; background: #F5F0E8; font-family: 'DM Sans', sans-serif; }
+    select { appearance: none; -webkit-appearance: none; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #C8BFA8; border-radius: 4px; }
+
+    .tab-btn {
+      background: none; border: none; cursor: pointer;
+      padding: 10px 18px; border-radius: 8px;
+      font-weight: 600; font-size: 14px; font-family: 'DM Sans', sans-serif;
+      transition: all 0.15s; color: #A8D5B8;
+    }
+    .tab-btn.active { background: #1B4332; color: #fff; }
+    .tab-btn:not(.active):hover { background: rgba(255,255,255,0.1); color: #fff; }
+
+    .person-chip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 10px; cursor: pointer;
+      border: 2px solid transparent; transition: all 0.15s;
+      font-family: 'DM Sans', sans-serif; font-size: 13px;
+      font-weight: 600; user-select: none;
+    }
+    .person-chip.selected { border-color: #2D6A4F; background: #E8F5EE; }
+    .person-chip:not(.selected) { border-color: #E0D9CD; background: #FAFAF7; }
+
+    .action-icon-btn {
+      border: none; cursor: pointer; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; padding: 6px 8px; transition: filter 0.15s;
+      line-height: 1;
+    }
+    .action-icon-btn:hover { filter: brightness(0.88); }
+
+    .card {
+      background: #FFFDF7; border-radius: 16px;
+      border: 1.5px solid #E8E0D0;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    }
+
+    /* toast */
+    @keyframes slideIn { from { transform: translateY(80px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    .toast { animation: slideIn 0.25s ease, fadeOut 0.4s ease 2s forwards; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo, useEffect, useCallback } = React;
+
+    /* ─── constants ─────────────────────────────────── */
+    const COLORS = ["#2D6A4F","#E76F51","#457B9D","#E9C46A","#9B5DE5","#F77F00","#4CC9F0","#EF233C"];
+    const STORAGE_KEY = "splitleaf_v1";
+
+    const DEFAULT_DATA = {
+      people: [
+        { id: 1, name: "You",   color: COLORS[0] },
+        { id: 2, name: "Alice", color: COLORS[1] },
+        { id: 3, name: "Bob",   color: COLORS[2] },
+      ],
+      expenses: [
+        { id: 1, desc: "Dinner",   amount: 900, paidBy: 1, participants: [1,2,3], date: "2025-03-20" },
+        { id: 2, desc: "Cab ride", amount: 300, paidBy: 2, participants: [1,2],   date: "2025-03-21" },
+      ]
+    };
+
+    /* ─── persistence ───────────────────────────────── */
+    function loadData() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) return JSON.parse(raw);
+      } catch(e) {}
+      return DEFAULT_DATA;
+    }
+    function saveData(data) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch(e) {}
+    }
+
+    /* ─── style constants ───────────────────────────── */
+    const inputStyle = {
+      width: "100%", padding: "11px 14px", border: "1.5px solid #DDD6C8",
+      borderRadius: 10, fontSize: 14, outline: "none",
+      fontFamily: "'DM Sans', sans-serif", background: "#FAFAF7",
+      boxSizing: "border-box", color: "#1A1A1A"
+    };
+    const labelStyle = {
+      fontSize: 12, fontWeight: 700, color: "#888", letterSpacing: 1,
+      textTransform: "uppercase", marginBottom: 6, display: "block",
+      fontFamily: "'DM Sans', sans-serif"
+    };
+    const btnPrimary = {
+      background: "#2D6A4F", color: "#fff", border: "none", borderRadius: 10,
+      padding: "12px 24px", fontWeight: 700, fontSize: 14, cursor: "pointer",
+      fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.3
+    };
+    const btnSecondary = {
+      background: "transparent", color: "#2D6A4F", border: "1.5px solid #2D6A4F",
+      borderRadius: 10, padding: "11px 20px", fontWeight: 700, fontSize: 14,
+      cursor: "pointer", fontFamily: "'DM Sans', sans-serif"
+    };
+
+    /* ─── Avatar ────────────────────────────────────── */
+    function Avatar({ name, color, size = 36 }) {
+      return (
+        <div style={{
+          width: size, height: size, borderRadius: "50%", background: color,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontWeight: 700, color: "#fff", fontSize: size * 0.38,
+          flexShrink: 0, letterSpacing: 0.5, fontFamily: "'DM Sans', sans-serif",
+        }}>
+          {name.charAt(0).toUpperCase()}
+        </div>
+      );
+    }
+
+    /* ─── Modal ─────────────────────────────────────── */
+    function Modal({ title, onClose, children }) {
+      useEffect(() => {
+        const onKey = e => { if (e.key === "Escape") onClose(); };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+      }, []);
+      return (
+        <div onClick={onClose} style={{
+          position: "fixed", inset: 0, background: "rgba(20,20,20,0.55)",
+          backdropFilter: "blur(4px)", zIndex: 100,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#FFFDF7", borderRadius: 20, padding: "32px 28px",
+            width: "100%", maxWidth: 440, boxShadow: "0 24px 80px rgba(0,0,0,0.18)",
+            border: "1.5px solid #E8E0D0", maxHeight: "90vh", overflowY: "auto"
+          }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: 24 }}>
+              <h2 style={{ margin:0, fontFamily:"'Fraunces',serif", fontSize:22, color:"#1A1A1A", fontWeight:700 }}>{title}</h2>
+              <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", fontSize:22, color:"#888", lineHeight:1, padding:4 }}>×</button>
+            </div>
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Confirm Modal ─────────────────────────────── */
+    function ConfirmModal({ message, onConfirm, onCancel }) {
+      return (
+        <div style={{
+          position:"fixed", inset:0, background:"rgba(20,20,20,0.55)",
+          backdropFilter:"blur(4px)", zIndex:200,
+          display:"flex", alignItems:"center", justifyContent:"center", padding:16
+        }}>
+          <div style={{
+            background:"#FFFDF7", borderRadius:20, padding:"32px 28px",
+            width:"100%", maxWidth:360,
+            boxShadow:"0 24px 80px rgba(0,0,0,0.18)",
+            border:"1.5px solid #E8E0D0", textAlign:"center"
+          }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>⚠️</div>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#444", marginBottom:24, lineHeight:1.6 }}>{message}</p>
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+              <button style={btnSecondary} onClick={onCancel}>Cancel</button>
+              <button style={{ ...btnPrimary, background:"#E63946" }} onClick={onConfirm}>Delete</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Toast ─────────────────────────────────────── */
+    function Toast({ message }) {
+      return (
+        <div className="toast" style={{
+          position:"fixed", bottom:28, left:"50%", transform:"translateX(-50%)",
+          background:"#1B4332", color:"#fff", borderRadius:12,
+          padding:"12px 22px", fontSize:14, fontWeight:600,
+          fontFamily:"'DM Sans',sans-serif", zIndex:300,
+          boxShadow:"0 8px 32px rgba(0,0,0,0.2)", whiteSpace:"nowrap"
+        }}>
+          {message}
+        </div>
+      );
+    }
+
+    /* ─── ExpenseForm ───────────────────────────────── */
+    function ExpenseForm({ people, initial, onSave, onCancel, saveLabel }) {
+      const today = new Date().toISOString().slice(0, 10);
+      const [desc,         setDesc]         = useState(initial?.desc || "");
+      const [amount,       setAmount]       = useState(initial?.amount?.toString() || "");
+      const [paidBy,       setPaidBy]       = useState(initial?.paidBy?.toString() || "");
+      const [participants, setParticipants] = useState(initial?.participants || []);
+      const [date,         setDate]         = useState(initial?.date || today);
+
+      const toggle = id => setParticipants(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+      const valid  = desc.trim() && amount && paidBy && participants.length > 0;
+
+      const handleSave = () => {
+        if (!valid) return;
+        onSave({ desc: desc.trim(), amount: parseFloat(amount), paidBy: parseInt(paidBy), participants, date });
+      };
+
+      return (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <div>
+            <label style={labelStyle}>Description</label>
+            <input style={inputStyle} placeholder="e.g. Dinner at Smoke House"
+              value={desc} onChange={e => setDesc(e.target.value)} autoFocus />
+          </div>
+          <div style={{ display:"flex", gap:12 }}>
+            <div style={{ flex:1 }}>
+              <label style={labelStyle}>Amount (₹)</label>
+              <input style={inputStyle} type="number" placeholder="0" min="0"
+                value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+            <div style={{ flex:1 }}>
+              <label style={labelStyle}>Date</label>
+              <input style={inputStyle} type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Paid By</label>
+            <select style={inputStyle} value={paidBy} onChange={e => setPaidBy(e.target.value)}>
+              <option value="">Select person</option>
+              {people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Split Between</label>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {people.map(p => (
+                <div key={p.id}
+                  className={`person-chip ${participants.includes(p.id) ? "selected" : ""}`}
+                  onClick={() => toggle(p.id)}>
+                  <Avatar name={p.name} color={p.color} size={24} />
+                  {p.name}
+                  {participants.includes(p.id) && <span style={{ color:"#2D6A4F" }}>✓</span>}
+                </div>
+              ))}
+            </div>
+            {participants.length > 0 && amount && (
+              <div style={{ marginTop:8, fontSize:13, color:"#888", fontWeight:600 }}>
+                ₹{(parseFloat(amount || 0) / participants.length).toFixed(0)} per person
+              </div>
+            )}
+          </div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:4 }}>
+            <button style={btnSecondary} onClick={onCancel}>Cancel</button>
+            <button
+              style={{ ...btnPrimary, opacity: valid ? 1 : 0.5, cursor: valid ? "pointer" : "not-allowed" }}
+              onClick={handleSave}>
+              {saveLabel}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── Main App ──────────────────────────────────── */
+    function App() {
+      const initial = loadData();
+      const [people,   setPeople]   = useState(initial.people);
+      const [expenses, setExpenses] = useState(initial.expenses);
+      const [tab,      setTab]      = useState("balances");
+
+      const [showAddPerson,  setShowAddPerson]  = useState(false);
+      const [showAddExpense, setShowAddExpense] = useState(false);
+      const [editingExpense, setEditingExpense] = useState(null);
+      const [confirmDelete,  setConfirmDelete]  = useState(null);
+      const [toast,          setToast]          = useState(null);
+      const [newName,        setNewName]        = useState("");
+
+      /* persist on every change */
+      useEffect(() => { saveData({ people, expenses }); }, [people, expenses]);
+
+      const showToast = msg => {
+        setToast(msg);
+        setTimeout(() => setToast(null), 2600);
+      };
+
+      const nextId = arr => arr.length ? Math.max(...arr.map(x => x.id)) + 1 : 1;
+      const getPerson = id => people.find(p => p.id === id);
+
+      /* people */
+      const addPerson = () => {
+        const name = newName.trim();
+        if (!name) return;
+        setPeople(p => [...p, { id: nextId(people), name, color: COLORS[people.length % COLORS.length] }]);
+        setNewName(""); setShowAddPerson(false);
+        showToast(`${name} added ✓`);
+      };
+
+      const deletePerson = id => {
+        const name = getPerson(id)?.name;
+        setPeople(p => p.filter(x => x.id !== id));
+        setExpenses(e => e
+          .filter(x => x.paidBy !== id)
+          .map(x => ({ ...x, participants: x.participants.filter(pid => pid !== id) }))
+          .filter(x => x.participants.length > 0)
+        );
+        setConfirmDelete(null);
+        showToast(`${name} removed`);
+      };
+
+      /* expenses */
+      const addExpense = data => {
+        setExpenses(e => [...e, { id: nextId(expenses), ...data }]);
+        setShowAddExpense(false);
+        showToast("Expense added ✓");
+      };
+
+      const updateExpense = data => {
+        setExpenses(e => e.map(x => x.id === editingExpense.id ? { ...x, ...data } : x));
+        setEditingExpense(null);
+        showToast("Expense updated ✓");
+      };
+
+      const deleteExpense = id => {
+        setExpenses(e => e.filter(x => x.id !== id));
+        setConfirmDelete(null);
+        showToast("Expense deleted");
+      };
+
+      /* balances */
+      const balances = useMemo(() => {
+        const bal = {};
+        people.forEach(p => bal[p.id] = 0);
+        expenses.forEach(exp => {
+          const share = exp.amount / exp.participants.length;
+          exp.participants.forEach(pid => {
+            if (pid !== exp.paidBy) {
+              bal[pid]       = (bal[pid]       || 0) - share;
+              bal[exp.paidBy] = (bal[exp.paidBy] || 0) + share;
+            }
+          });
+        });
+        return bal;
+      }, [expenses, people]);
+
+      /* settlements (greedy minimum transactions) */
+      const settlements = useMemo(() => {
+        const d = people.filter(p => balances[p.id] < -0.01).map(p => ({ ...p, amt: -balances[p.id] }));
+        const c = people.filter(p => balances[p.id] >  0.01).map(p => ({ ...p, amt:  balances[p.id] }));
+        const txns = [];
+        let di = 0, ci = 0;
+        while (di < d.length && ci < c.length) {
+          const settle = Math.min(d[di].amt, c[ci].amt);
+          txns.push({ from: d[di], to: c[ci], amount: settle });
+          d[di].amt -= settle; c[ci].amt -= settle;
+          if (d[di].amt < 0.01) di++;
+          if (c[ci].amt < 0.01) ci++;
+        }
+        return txns;
+      }, [balances, people]);
+
+      const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+
+      /* ── render ── */
+      return (
+        <div style={{ minHeight:"100vh", background:"#F5F0E8", paddingBottom:48 }}>
+
+          {/* ── Header ── */}
+          <div style={{ background:"#2D6A4F", padding:"0 24px" }}>
+            <div style={{ maxWidth:680, margin:"0 auto", padding:"22px 0 0" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+                <div>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+                    <span style={{ fontSize:28 }}>🍃</span>
+                    <h1 style={{ fontFamily:"'Fraunces',serif", color:"#fff", fontSize:28, fontWeight:900, letterSpacing:-0.5 }}>SplitLeaf</h1>
+                  </div>
+                  <p style={{ color:"#A8D5B8", fontSize:13, fontWeight:500 }}>Settle up without the drama</p>
+                </div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <button style={btnSecondary} onClick={() => setShowAddPerson(true)}>+ Person</button>
+                  <button style={{ ...btnPrimary, background:"#52B788" }} onClick={() => setShowAddExpense(true)}>+ Expense</button>
+                </div>
+              </div>
+
+              {/* stats */}
+              <div style={{ display:"flex", gap:28, marginTop:24 }}>
+                {[
+                  ["₹" + totalExpenses.toLocaleString(), "total spent"],
+                  [expenses.length, "expenses"],
+                  [people.length, "people"]
+                ].map(([val, label]) => (
+                  <div key={label} style={{ color:"#A8D5B8", fontSize:13 }}>
+                    <span style={{ color:"#fff", fontWeight:700, fontSize:20, fontFamily:"'Fraunces',serif" }}>{val}</span>
+                    <div>{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* tabs */}
+              <div style={{ display:"flex", gap:4, marginTop:20, background:"rgba(0,0,0,0.15)", borderRadius:10, padding:4, width:"fit-content" }}>
+                {["balances","expenses","people"].map(t => (
+                  <button key={t} className={`tab-btn${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
+                    {t.charAt(0).toUpperCase() + t.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Content ── */}
+          <div style={{ maxWidth:680, margin:"28px auto 0", padding:"0 16px" }}>
+
+            {/* BALANCES */}
+            {tab === "balances" && (
+              <div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12, marginBottom:28 }}>
+                  {people.map(p => {
+                    const bal  = balances[p.id] || 0;
+                    const isPos = bal >  0.01;
+                    const isNeg = bal < -0.01;
+                    return (
+                      <div key={p.id} className="card" style={{
+                        padding:"18px 20px",
+                        borderColor: isPos ? "#A8D5B8" : isNeg ? "#F4A59A" : "#E8E0D0"
+                      }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+                          <Avatar name={p.name} color={p.color} />
+                          <span style={{ fontWeight:700, fontSize:15, color:"#1A1A1A" }}>{p.name}</span>
+                        </div>
+                        <div style={{ fontSize:22, fontWeight:900, fontFamily:"'Fraunces',serif", color: isPos ? "#2D6A4F" : isNeg ? "#E63946" : "#888" }}>
+                          {Math.abs(bal) < 0.01 ? "—" : `${isPos ? "+" : "-"}₹${Math.abs(bal).toFixed(0)}`}
+                        </div>
+                        <div style={{ fontSize:12, color:"#AAA", marginTop:3, fontWeight:600 }}>
+                          {isPos ? "gets back" : isNeg ? "owes" : "settled up"}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {settlements.length > 0 && (
+                  <>
+                    <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:17, color:"#1A1A1A", marginBottom:14 }}>Suggested Settlements</h3>
+                    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                      {settlements.map((s, i) => (
+                        <div key={i} className="card" style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:12 }}>
+                          <Avatar name={s.from.name} color={s.from.color} size={32} />
+                          <div style={{ flex:1 }}>
+                            <span style={{ fontWeight:700, color:"#1A1A1A", fontSize:14 }}>{s.from.name}</span>
+                            <span style={{ color:"#AAA", fontSize:13 }}> pays </span>
+                            <span style={{ fontWeight:700, color:"#2D6A4F", fontSize:14 }}>₹{s.amount.toFixed(0)}</span>
+                            <span style={{ color:"#AAA", fontSize:13 }}> to </span>
+                            <span style={{ fontWeight:700, color:"#1A1A1A", fontSize:14 }}>{s.to.name}</span>
+                          </div>
+                          <Avatar name={s.to.name} color={s.to.color} size={32} />
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {settlements.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"40px 0" }}>
+                    <div style={{ fontSize:40, marginBottom:8 }}>✅</div>
+                    <div style={{ fontWeight:700, fontSize:16, color:"#888" }}>All settled up!</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* EXPENSES */}
+            {tab === "expenses" && (
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {expenses.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"60px 0" }}>
+                    <div style={{ fontSize:40, marginBottom:8 }}>🧾</div>
+                    <div style={{ fontWeight:700, fontSize:16, color:"#888" }}>No expenses yet</div>
+                    <div style={{ fontSize:13, marginTop:4, color:"#BBB" }}>Add one to get started</div>
+                  </div>
+                )}
+                {expenses.slice().reverse().map(exp => {
+                  const payer = getPerson(exp.paidBy);
+                  const share = exp.amount / exp.participants.length;
+                  return (
+                    <div key={exp.id} className="card" style={{ padding:"16px 20px", display:"flex", gap:14, alignItems:"flex-start" }}>
+                      <div style={{ width:44, height:44, borderRadius:12, background:"#E8F5EE", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>🧾</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
+                          <div>
+                            <div style={{ fontWeight:700, fontSize:15, color:"#1A1A1A" }}>{exp.desc}</div>
+                            <div style={{ fontSize:12, color:"#AAA", marginTop:2 }}>{exp.date}</div>
+                          </div>
+                          <div style={{ textAlign:"right", flexShrink:0 }}>
+                            <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontWeight:900, color:"#2D6A4F" }}>₹{exp.amount.toLocaleString()}</div>
+                            <div style={{ fontSize:11, color:"#AAA" }}>₹{share.toFixed(0)}/person</div>
+                          </div>
+                        </div>
+                        <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                            <Avatar name={payer?.name || "?"} color={payer?.color || "#ccc"} size={22} />
+                            <span style={{ fontSize:12, fontWeight:600, color:"#555" }}>{payer?.name} paid</span>
+                          </div>
+                          <span style={{ color:"#DDD" }}>·</span>
+                          <div style={{ display:"flex", gap:4, alignItems:"center" }}>
+                            {exp.participants.map(pid => {
+                              const pp = getPerson(pid);
+                              return pp ? <Avatar key={pid} name={pp.name} color={pp.color} size={22} /> : null;
+                            })}
+                            <span style={{ fontSize:12, color:"#AAA", fontWeight:500 }}>{exp.participants.length} splitting</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                        <button className="action-icon-btn" title="Edit"
+                          style={{ background:"#EBF4FB", color:"#457B9D" }}
+                          onClick={() => setEditingExpense(exp)}>✏️</button>
+                        <button className="action-icon-btn" title="Delete"
+                          style={{ background:"#FDECEA", color:"#E63946" }}
+                          onClick={() => setConfirmDelete({ type:"expense", id:exp.id, message:`Delete "${exp.desc}"? This will update everyone's balances.` })}>🗑️</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* PEOPLE */}
+            {tab === "people" && (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:12 }}>
+                {people.map(p => {
+                  const bal      = balances[p.id] || 0;
+                  const expCount = expenses.filter(e => e.participants.includes(p.id)).length;
+                  return (
+                    <div key={p.id} className="card" style={{ padding:"20px", textAlign:"center", position:"relative" }}>
+                      <button className="action-icon-btn" title="Remove person"
+                        style={{ background:"#FDECEA", color:"#E63946", position:"absolute", top:10, right:10, fontSize:13, padding:"5px 7px" }}
+                        onClick={() => setConfirmDelete({ type:"person", id:p.id, message:`Remove ${p.name}? Their paid expenses will also be removed.` })}>
+                        🗑️
+                      </button>
+                      <Avatar name={p.name} color={p.color} size={48} />
+                      <div style={{ marginTop:10, fontWeight:700, fontSize:15, color:"#1A1A1A" }}>{p.name}</div>
+                      <div style={{ fontSize:12, color:"#AAA", marginTop:3 }}>{expCount} expense{expCount !== 1 ? "s" : ""}</div>
+                      <div style={{ marginTop:10, fontWeight:700, fontSize:15, color: bal > 0.01 ? "#2D6A4F" : bal < -0.01 ? "#E63946" : "#AAA" }}>
+                        {bal > 0.01 ? `+₹${bal.toFixed(0)}` : bal < -0.01 ? `-₹${Math.abs(bal).toFixed(0)}` : "Settled"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Modals ── */}
+          {showAddPerson && (
+            <Modal title="Add Person" onClose={() => { setShowAddPerson(false); setNewName(""); }}>
+              <label style={labelStyle}>Name</label>
+              <input style={inputStyle} placeholder="e.g. Rohan" value={newName}
+                onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && addPerson()} autoFocus />
+              <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:22 }}>
+                <button style={btnSecondary} onClick={() => { setShowAddPerson(false); setNewName(""); }}>Cancel</button>
+                <button style={btnPrimary} onClick={addPerson}>Add Person</button>
+              </div>
+            </Modal>
+          )}
+
+          {showAddExpense && (
+            <Modal title="Add Expense" onClose={() => setShowAddExpense(false)}>
+              <ExpenseForm people={people} onSave={addExpense} onCancel={() => setShowAddExpense(false)} saveLabel="Add Expense" />
+            </Modal>
+          )}
+
+          {editingExpense && (
+            <Modal title="Edit Expense" onClose={() => setEditingExpense(null)}>
+              <ExpenseForm people={people} initial={editingExpense} onSave={updateExpense} onCancel={() => setEditingExpense(null)} saveLabel="Save Changes" />
+            </Modal>
+          )}
+
+          {confirmDelete && (
+            <ConfirmModal
+              message={confirmDelete.message}
+              onCancel={() => setConfirmDelete(null)}
+              onConfirm={() => {
+                if (confirmDelete.type === "expense") deleteExpense(confirmDelete.id);
+                else deletePerson(confirmDelete.id);
+              }}
+            />
+          )}
+
+          {toast && <Toast message={toast} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
